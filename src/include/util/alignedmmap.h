@@ -22,6 +22,7 @@
 #ifndef HOARD_ALIGNEDMMAP_H
 #define HOARD_ALIGNEDMMAP_H
 
+#include <pthread.h>
 #include <unordered_map>
 
 #include "heaplayers.h"
@@ -62,11 +63,16 @@ namespace Hoard {
 
     inline void * malloc (size_t sz) {
 
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] AlignedMmapInstance::malloc() called\n", (unsigned long)pthread_self());
+      fflush(stderr);
+
       // Round up sz to the nearest page.
       sz = HL::align<HL::MmapWrapper::Size>(sz);
 
       // If the memory is already suitably aligned, just track size requests.
       if ((size_t) HL::MmapWrapper::Alignment % (size_t) Alignment == 0) {
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] Path 1 - Already aligned, calling MmapWrapper::map\n", (unsigned long)pthread_self());
+	fflush(stderr);
 	void * ptr = HL::MmapWrapper::map (sz);
 #if TRACK_SIZE
 	MyMap.set (ptr, sz);
@@ -80,10 +86,14 @@ namespace Hoard {
       // Try a map call and hope that it's suitably aligned. If we get lucky,
       // we're done.
 
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] Path 2 - Try direct map with alignment check\n", (unsigned long)pthread_self());
+      fflush(stderr);
       ptr = HL::MmapWrapper::map (sz);
 
       if ((size_t) ptr == HL::align<Alignment>((size_t) ptr)) {
 	// We're done.
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] Path 2 - Got aligned pointer, done\n", (unsigned long)pthread_self());
+	fflush(stderr);
 #if TRACK_SIZE
 	MyMap.set (ptr, sz);
 #endif
@@ -91,6 +101,8 @@ namespace Hoard {
       }
 
       // Try again.
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] Path 2 - Not aligned, unmapping and calling slowMap\n", (unsigned long)pthread_self());
+      fflush(stderr);
       HL::MmapWrapper::unmap ((void *) ptr, sz);
 
       return slowMap (sz);
@@ -127,10 +139,15 @@ namespace Hoard {
 
     void * slowMap (size_t sz) {
 
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] AlignedMmapInstance::slowMap() - need manual alignment\n", (unsigned long)pthread_self());
+      fflush(stderr);
+
       // We have to align it ourselves. We get memory from
       // mmap, align a pointer in the space, and free the space before
       // and after the aligned segment.
 
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] slowMap calling MmapWrapper::map with extra space for alignment\n", (unsigned long)pthread_self());
+      fflush(stderr);
       void * ptr = reinterpret_cast<char *>(HL::MmapWrapper::map (sz + Alignment));
 
       if (ptr == nullptr) {

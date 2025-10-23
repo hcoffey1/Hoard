@@ -16,6 +16,7 @@
 #ifndef HOARD_ALIGNEDSUPERBLOCKHEAP_H
 #define HOARD_ALIGNEDSUPERBLOCKHEAP_H
 
+#include <pthread.h>
 #include "heaplayers.h"
 
 #include "conformantheap.h"
@@ -46,8 +47,13 @@ namespace Hoard {
     }
     
     void * malloc (size_t) {
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore::malloc() called\n", (unsigned long)pthread_self());
+      fflush(stderr);
+      
       if (_freeSuperblocks.isEmpty()) {
 	// Get more memory.
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore - free list empty, allocating from MmapSource\n", (unsigned long)pthread_self());
+	fflush(stderr);
 	void * ptr = _superblockSource.malloc (ChunksToGrab * SuperblockSize);
 	if (!ptr) {
 	  return nullptr;
@@ -57,6 +63,9 @@ namespace Hoard {
 	  _freeSuperblocks.insert ((DLList::Entry *) p);
 	  p += SuperblockSize;
 	}
+      } else {
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore - reusing from free list\n", (unsigned long)pthread_self());
+	fflush(stderr);
       }
       return _freeSuperblocks.get();
     }

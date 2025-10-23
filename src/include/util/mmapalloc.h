@@ -16,6 +16,7 @@
 #ifndef HOARD_MMAPALLOC_H
 #define HOARD_MMAPALLOC_H
 
+#include <pthread.h>
 #include "heaplayers.h"
 
 /**
@@ -32,6 +33,8 @@ namespace Hoard {
     enum { Alignment = HL::MmapWrapper::Alignment };
     
     static void * malloc (size_t sz) {
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] MmapAlloc::malloc() calling MmapWrapper::map\n", (unsigned long)pthread_self());
+      fflush(stderr);
       void * ptr = HL::MmapWrapper::map (sz);
       return ptr;
     }

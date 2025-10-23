@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <new>
 #include <mutex>
+#include <pthread.h>
+#include <dlfcn.h>
 
 // Hoard-specific Heap Layers
 #include "statistics.h"
@@ -66,11 +68,44 @@ namespace Hoard {
 
     typedef SuperblockType_ SuperblockType;
 
+  private:
+    static inline void print_malloc_stack_trace(size_t sz) {
+      void* caller0 = __builtin_return_address(0);
+      void* caller1 = __builtin_return_address(1);
+      Dl_info info0, info1;
+      
+      fprintf(stderr, "HOARD_MALLOC_TRACE: malloc(size=%zu) from TID %lu\n", 
+              sz, (unsigned long)pthread_self());
+      
+      if (dladdr(caller0, &info0) && info0.dli_sname) {
+        fprintf(stderr, "  [0] %s (%s+0x%lx)\n", 
+                info0.dli_sname, 
+                info0.dli_fname ? info0.dli_fname : "???",
+                (unsigned long)((char*)caller0 - (char*)info0.dli_fbase));
+      } else {
+        fprintf(stderr, "  [0] %p\n", caller0);
+      }
+      
+      if (dladdr(caller1, &info1) && info1.dli_sname) {
+        fprintf(stderr, "  [1] %s (%s+0x%lx)\n", 
+                info1.dli_sname, 
+                info1.dli_fname ? info1.dli_fname : "???",
+                (unsigned long)((char*)caller1 - (char*)info1.dli_fbase));
+      } else {
+        fprintf(stderr, "  [1] %p\n", caller1);
+      }
+      
+      fflush(stderr);
+    }
+    
+  public:
     enum { Alignment = SuperblockType::Header::Alignment };
 
 
     MALLOC_FUNCTION INLINE void * malloc (size_t sz)
     {
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::malloc() called\n", (unsigned long)pthread_self());
+      fflush(stderr);
       Check<HoardManager, sanityCheck> check (this);
       int binIndex;
       size_t realSize;
@@ -89,6 +124,9 @@ namespace Hoard {
       // Iterate until we succeed in allocating memory.
       auto ptr = getObject (binIndex, realSize);
       if (!ptr) {
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::malloc() - fast path failed, calling slowPathMalloc\n", (unsigned long)pthread_self());
+	fflush(stderr);
+	print_malloc_stack_trace(sz);
 	ptr = slowPathMalloc (realSize);
       }
       assert (SuperHeap::getSize(ptr) >= sz);
@@ -286,6 +324,8 @@ namespace Hoard {
     }
 
     MALLOC_FUNCTION NO_INLINE void * slowPathMalloc (size_t sz) {
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() called\n", (unsigned long)pthread_self());
+      fflush(stderr);
       auto binIndex = binType::getSizeClass (sz);
       auto realSize = binType::getClassSize (binIndex);
       assert (realSize >= sz);
@@ -297,6 +337,8 @@ namespace Hoard {
 	} else {
 	  Check<HoardManager, sanityCheck> check2 (this);
 	  // Return null if we can't allocate another superblock.
+	  fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() - calling getAnotherSuperblock\n", (unsigned long)pthread_self());
+	  fflush(stderr);
 	  if (!getAnotherSuperblock (realSize)) {
 	    //	  fprintf (stderr, "HoardManager::malloc - no memory.\n");
 	    return 0;
@@ -339,6 +381,9 @@ namespace Hoard {
 
     NO_INLINE void * getAnotherSuperblock (size_t sz) {
 
+      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() called\n", (unsigned long)pthread_self());
+      fflush(stderr);
+
       // NB: This function should be on the slow path.
 
       // Try the parent heap.
@@ -353,6 +398,8 @@ namespace Hoard {
 
       } else {
 	// Nothing - get memory from the source.
+	fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() - parent heap failed, calling _sourceHeap.malloc\n", (unsigned long)pthread_self());
+	fflush(stderr);
 	void * ptr = _sourceHeap.malloc (SuperblockSize);
 	if (!ptr) {
 	  return 0;
