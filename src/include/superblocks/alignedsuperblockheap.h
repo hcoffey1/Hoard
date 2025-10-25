@@ -17,11 +17,20 @@
 #define HOARD_ALIGNEDSUPERBLOCKHEAP_H
 
 #include <pthread.h>
+#include <stdio.h>
+#include <stdarg.h>
 #include "heaplayers.h"
 
 #include "conformantheap.h"
 #include "fixedrequestheap.h"
 
+#ifndef HOARD_TRACE_MSG
+#define HOARD_TRACE_MSG(...) do { \
+    char __buf[256]; \
+    int __n = snprintf(__buf, sizeof(__buf), __VA_ARGS__); \
+    if (__n > 0) fputs(__buf, stderr); \
+  } while (0)
+#endif
 namespace Hoard {
 
   template <size_t SuperblockSize,
@@ -47,25 +56,28 @@ namespace Hoard {
     }
     
     void * malloc (size_t) {
-      fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore::malloc() called\n", (unsigned long)pthread_self());
-      fflush(stderr);
+      HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] SuperblockStore::malloc() called\n", (unsigned long)pthread_self());
+      //fflush(stderr);
       
       if (_freeSuperblocks.isEmpty()) {
 	// Get more memory.
-	fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore - free list empty, allocating from MmapSource\n", (unsigned long)pthread_self());
-	fflush(stderr);
-	void * ptr = _superblockSource.malloc (ChunksToGrab * SuperblockSize);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] SuperblockStore - free list empty, allocating from MmapSource\n", (unsigned long)pthread_self());
+  //fflush(stderr);
+      size_t request_bytes = ChunksToGrab * SuperblockSize;
+      void * ptr = _superblockSource.malloc (request_bytes);
 	if (!ptr) {
 	  return nullptr;
 	}
+            HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] SuperblockStore - chunk ptr=%p size=%zu\n", (unsigned long)pthread_self(), ptr, request_bytes);
+            //fflush(stderr);
 	char * p = (char *) ptr;
 	for (int i = 0; i < ChunksToGrab; i++) {
 	  _freeSuperblocks.insert ((DLList::Entry *) p);
 	  p += SuperblockSize;
 	}
       } else {
-	fprintf(stderr, "HOARD_TRACE: [TID %lu] SuperblockStore - reusing from free list\n", (unsigned long)pthread_self());
-	fflush(stderr);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] SuperblockStore - reusing from free list\n", (unsigned long)pthread_self());
+  //fflush(stderr);
       }
       return _freeSuperblocks.get();
     }
@@ -76,11 +88,18 @@ namespace Hoard {
 
   private:
 
-#if defined(__SVR4)
-    enum { ChunksToGrab = 1 };
+#if defined(__linux__)
+  enum { DesiredChunkSize = 2 * 1024 * 1024 }; // HeMem expects huge-page granularity
 #else
-    enum { ChunksToGrab = 1 };
+  enum { DesiredChunkSize = SuperblockSize };
 #endif
+
+#if defined(__linux__)
+  static_assert(DesiredChunkSize % SuperblockSize == 0,
+          "Superblock size must divide huge page size");
+#endif
+
+  enum { ChunksToGrab = (SuperblockSize >= DesiredChunkSize) ? 1 : (DesiredChunkSize / SuperblockSize) };
 
     MmapSource _superblockSource;
     DLList _freeSuperblocks;

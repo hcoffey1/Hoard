@@ -30,7 +30,7 @@ using namespace HL;
 // Larger superblock sizes are not yet working for Windows for some reason to be determined.
 #define SUPERBLOCK_SIZE 65536UL
 #else
-#define SUPERBLOCK_SIZE 262144UL
+#define SUPERBLOCK_SIZE (2UL * 1024UL * 1024UL)
 // unclear why this is not working with 524288UL and larger...
 #endif
 

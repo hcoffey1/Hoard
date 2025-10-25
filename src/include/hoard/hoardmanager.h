@@ -21,6 +21,15 @@
 #include <mutex>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <stdio.h>
+#include <stdarg.h>
+#ifndef HOARD_TRACE_MSG
+#define HOARD_TRACE_MSG(...) do { \
+    char __buf[256]; \
+    int __n = snprintf(__buf, sizeof(__buf), __VA_ARGS__); \
+    if (__n > 0) fputs(__buf, stderr); \
+  } while (0)
+#endif
 
 // Hoard-specific Heap Layers
 #include "statistics.h"
@@ -73,39 +82,39 @@ namespace Hoard {
       void* caller0 = __builtin_return_address(0);
       void* caller1 = __builtin_return_address(1);
       Dl_info info0, info1;
-      
-      fprintf(stderr, "HOARD_MALLOC_TRACE: malloc(size=%zu) from TID %lu\n", 
-              sz, (unsigned long)pthread_self());
-      
+
+      HOARD_TRACE_MSG("HOARD_MALLOC_TRACE: malloc(size=%zu) from TID %lu\n",
+        sz, (unsigned long)pthread_self());
+
       if (dladdr(caller0, &info0) && info0.dli_sname) {
-        fprintf(stderr, "  [0] %s (%s+0x%lx)\n", 
-                info0.dli_sname, 
-                info0.dli_fname ? info0.dli_fname : "???",
-                (unsigned long)((char*)caller0 - (char*)info0.dli_fbase));
+  HOARD_TRACE_MSG("  [0] %s (%s+0x%lx)\n",
+    info0.dli_sname,
+    info0.dli_fname ? info0.dli_fname : "???",
+    (unsigned long)((char*)caller0 - (char*)info0.dli_fbase));
       } else {
-        fprintf(stderr, "  [0] %p\n", caller0);
+  HOARD_TRACE_MSG("  [0] %p\n", caller0);
       }
-      
+
       if (dladdr(caller1, &info1) && info1.dli_sname) {
-        fprintf(stderr, "  [1] %s (%s+0x%lx)\n", 
-                info1.dli_sname, 
-                info1.dli_fname ? info1.dli_fname : "???",
-                (unsigned long)((char*)caller1 - (char*)info1.dli_fbase));
+  HOARD_TRACE_MSG("  [1] %s (%s+0x%lx)\n",
+    info1.dli_sname,
+    info1.dli_fname ? info1.dli_fname : "???",
+    (unsigned long)((char*)caller1 - (char*)info1.dli_fbase));
       } else {
-        fprintf(stderr, "  [1] %p\n", caller1);
+  HOARD_TRACE_MSG("  [1] %p\n", caller1);
       }
-      
-      fflush(stderr);
+
+      //fflush(stderr);
     }
-    
+
   public:
     enum { Alignment = SuperblockType::Header::Alignment };
 
 
     MALLOC_FUNCTION INLINE void * malloc (size_t sz)
     {
-      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::malloc() called\n", (unsigned long)pthread_self());
-      fflush(stderr);
+  //HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::malloc() called\n", (unsigned long)pthread_self());
+  //fflush(stderr);
       Check<HoardManager, sanityCheck> check (this);
       int binIndex;
       size_t realSize;
@@ -124,9 +133,9 @@ namespace Hoard {
       // Iterate until we succeed in allocating memory.
       auto ptr = getObject (binIndex, realSize);
       if (!ptr) {
-	fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::malloc() - fast path failed, calling slowPathMalloc\n", (unsigned long)pthread_self());
-	fflush(stderr);
-	print_malloc_stack_trace(sz);
+	fputs("HOARD_TRACE: HoardManager::malloc() - fast path failed, calling slowPathMalloc\n", stderr);
+	//fflush(stderr);
+	//print_malloc_stack_trace(sz);
 	ptr = slowPathMalloc (realSize);
       }
       assert (SuperHeap::getSize(ptr) >= sz);
@@ -143,6 +152,10 @@ namespace Hoard {
       Check<HoardManager, sanityCheck> check (this);
 
       const auto binIndex = binType::getSizeClass(sz);
+
+      HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::put(s=%p sz=%zu binIndex=%d)\n",
+        (unsigned long)pthread_self(), s, sz, binIndex);
+      //fflush(stderr);
 
       // Check to see whether this superblock puts us over.
       auto& stats = _stats(binIndex);
@@ -167,7 +180,7 @@ namespace Hoard {
       auto * s = _otherBins(binIndex).get();
       if (s) {
 	assert (s->isValidSuperblock());
-      
+
 	// Update the statistics, removing objects in use and allocated for s.
 	decStatsSuperblock (s, binIndex);
 	s->setOwner (dest);
@@ -180,9 +193,24 @@ namespace Hoard {
     INLINE void free (void * ptr) {
       Check<HoardManager, sanityCheck> check (this);
 
+      HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::free(ptr=%p)\n",
+        (unsigned long)pthread_self(), ptr);
+      //fflush(stderr);
+
       // Get the corresponding superblock.
       SuperblockType * s = SuperHeap::getSuperblock (ptr);
- 
+
+      if (!s || !s->isValidSuperblock()) {
+        HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::free(ptr=%p) invalid superblock=%p\n",
+          (unsigned long)pthread_self(), ptr, s);
+        //fflush(stderr);
+        return;
+      }
+
+      HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::free(ptr=%p) superblock=%p owner=%p\n",
+        (unsigned long)pthread_self(), ptr, s, s->getOwner());
+      //fflush(stderr);
+
       assert (s->getOwner() == this);
 
       // Find out which bin it belongs to.
@@ -239,7 +267,7 @@ namespace Hoard {
     size_t _cachedSize;
     size_t _cachedRealSize;
     int    _cachedSizeClass;
-    
+
     inline int isValid() const {
       return (_magic == MAGIC_NUMBER);
     }
@@ -258,11 +286,11 @@ namespace Hoard {
       // We've crossed the threshold.
       // Remove a superblock and give it to the 'parent heap.'
       Check<HoardManager, sanityCheck> check (this);
-    
+
       //	printf ("HoardManager: this = %x, getting a superblock\n", this);
-    
+
       SuperblockType * sb = _otherBins(binIndex).get ();
-    
+
       // We should always get one.
       assert (sb);
       if (sb) {
@@ -291,6 +319,10 @@ namespace Hoard {
       Check<HoardManager, sanityCheck> check (this);
 
       const auto binIndex = binType::getSizeClass(sz);
+
+      HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::unlocked_put(s=%p sz=%zu binIndex=%d)\n",
+        (unsigned long)pthread_self(), s, sz, binIndex);
+      //fflush(stderr);
 
       // Now put it on this heap.
       s->setOwner (reinterpret_cast<HeapType *>(this));
@@ -324,8 +356,8 @@ namespace Hoard {
     }
 
     MALLOC_FUNCTION NO_INLINE void * slowPathMalloc (size_t sz) {
-      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() called\n", (unsigned long)pthread_self());
-      fflush(stderr);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() called\n", (unsigned long)pthread_self());
+  //fflush(stderr);
       auto binIndex = binType::getSizeClass (sz);
       auto realSize = binType::getClassSize (binIndex);
       assert (realSize >= sz);
@@ -337,8 +369,8 @@ namespace Hoard {
 	} else {
 	  Check<HoardManager, sanityCheck> check2 (this);
 	  // Return null if we can't allocate another superblock.
-	  fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() - calling getAnotherSuperblock\n", (unsigned long)pthread_self());
-	  fflush(stderr);
+    HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::slowPathMalloc() - calling getAnotherSuperblock\n", (unsigned long)pthread_self());
+    //fflush(stderr);
 	  if (!getAnotherSuperblock (realSize)) {
 	    //	  fprintf (stderr, "HoardManager::malloc - no memory.\n");
 	    return 0;
@@ -381,8 +413,8 @@ namespace Hoard {
 
     NO_INLINE void * getAnotherSuperblock (size_t sz) {
 
-      fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() called\n", (unsigned long)pthread_self());
-      fflush(stderr);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() called\n", (unsigned long)pthread_self());
+  //fflush(stderr);
 
       // NB: This function should be on the slow path.
 
@@ -396,11 +428,20 @@ namespace Hoard {
 	  sb = nullptr;
 	}
 
+        if (sb) {
+          HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() reused parent superblock=%p free=%u total=%u size=%zu\n",
+            (unsigned long)pthread_self(), sb, sb->getObjectsFree(), sb->getTotalObjects(), sz);
+          //fflush(stderr);
+        }
+
       } else {
 	// Nothing - get memory from the source.
-	fprintf(stderr, "HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() - parent heap failed, calling _sourceHeap.malloc\n", (unsigned long)pthread_self());
-	fflush(stderr);
-	void * ptr = _sourceHeap.malloc (SuperblockSize);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() - parent heap failed, calling _sourceHeap.malloc\n", (unsigned long)pthread_self());
+  //fflush(stderr);
+  void * ptr = _sourceHeap.malloc (SuperblockSize);
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardManager::getAnotherSuperblock() - _sourceHeap.malloc returned %p (size=%zu)\n",
+          (unsigned long)pthread_self(), ptr, (size_t)SuperblockSize);
+  //fflush(stderr);
 	if (!ptr) {
 	  return 0;
 	}

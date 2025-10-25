@@ -27,6 +27,15 @@
 #include "heaplayers.h"
 
 #include <cstdlib>
+#include <stdio.h>
+
+#ifndef HOARD_TRACE_MSG
+#define HOARD_TRACE_MSG(...) do { \
+    char __buf[256]; \
+    int __n = snprintf(__buf, sizeof(__buf), __VA_ARGS__); \
+    if (__n > 0) fputs(__buf, stderr); \
+  } while (0)
+#endif
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -101,6 +110,11 @@ namespace Hoard {
     inline void free (void * ptr) {
       assert ((size_t) ptr % Alignment == 0);
       assert (isValid());
+      if (_objectsFree >= _totalObjects) {
+        HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] HoardSuperblockHeader::free double-free? ptr=%p start=%p objectsFree=%u total=%u\n",
+          (unsigned long)pthread_self(), ptr, _start, _objectsFree, _totalObjects);
+      //  fflush(stderr);
+      }
       _freeList.insert (reinterpret_cast<FreeSLList::Entry *>(ptr));
       _objectsFree++;
       if (_objectsFree == _totalObjects) {

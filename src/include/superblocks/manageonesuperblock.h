@@ -28,8 +28,18 @@
  * @author Emery Berger <http://www.cs.umass.edu/~emery>
  */
 
+#include <stdio.h>
+
 #define likely(x) (x) // __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
+
+#ifndef HOARD_TRACE_MSG
+#define HOARD_TRACE_MSG(...) do { \
+    char __buf[256]; \
+    int __n = snprintf(__buf, sizeof(__buf), __VA_ARGS__); \
+    if (__n > 0) fputs(__buf, stderr); \
+  } while (0)
+#endif
 
 namespace Hoard {
 
@@ -48,9 +58,15 @@ namespace Hoard {
       if (likely(_current)) {
 	void * ptr = _current->malloc (sz);
 	if (ptr) {
+    //HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::malloc fast path superblock=%p size=%zu ptr=%p\n",
+     // (unsigned long)pthread_self(), _current, sz, ptr);
+    //fflush(stderr);
 	  assert (_current->getSize(ptr) >= sz);
 	  return ptr;
 	}
+  HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::malloc fast path miss superblock=%p size=%zu\n",
+    (unsigned long)pthread_self(), _current, sz);
+  fflush(stderr);
       }
       // No memory -- get another superblock.
       return slowMallocPath (sz);
@@ -60,8 +76,14 @@ namespace Hoard {
     inline void free (void * ptr) {
       SuperblockType * s = SuperHeap::getSuperblock (ptr);
       if (likely(s == _current)) {
+        HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::free local ptr=%p superblock=%p\n",
+          (unsigned long)pthread_self(), ptr, s);
+        fflush(stderr);
 	_current->free (ptr);
       } else {
+        HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::free remote ptr=%p superblock=%p current=%p\n",
+          (unsigned long)pthread_self(), ptr, s, _current);
+        fflush(stderr);
 	// It wasn't ours, so free it remotely.
 	SuperHeap::free (ptr);
       }
@@ -101,7 +123,10 @@ namespace Hoard {
       while (!ptr) {
 	// If we don't have a superblock, get one.
 	if (!_current) {
-	  _current = SuperHeap::get();
+    _current = SuperHeap::get();
+    HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::slowMallocPath fetched superblock=%p for size=%zu\n",
+      (unsigned long)pthread_self(), _current, sz);
+    fflush(stderr);
 	  if (!_current) {
 	    // Out of memory.
 	    return nullptr;
@@ -110,6 +135,9 @@ namespace Hoard {
 	// Try to allocate memory from it.
 	ptr = _current->malloc (sz);
 	if (!ptr) {
+    HOARD_TRACE_MSG("HOARD_TRACE: [TID %lu] ManageOneSuperblock::slowMallocPath exhausted superblock=%p for size=%zu\n",
+      (unsigned long)pthread_self(), _current, sz);
+    fflush(stderr);
 	  // No memory left: put the superblock away and get a new one next time.
 	  SuperHeap::put (_current);
 	  _current = nullptr;
